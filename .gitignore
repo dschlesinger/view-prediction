@@ -1,0 +1,9 @@
+# Datasets
+INBreast
+CBIS-DDSM
+
+# Feature saves
+*.features.*
+
+# Other
+__pycache__

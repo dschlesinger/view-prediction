@@ -1,0 +1,266 @@
+import pandas as pd, numpy as np
+import os, sys, math, json, shutil
+from utils.colors import Colors
+from utils.featurizer import featurizer
+
+from typing import Tuple, List, Dict, Union
+
+import kagglehub
+import pydicom
+import tarfile
+
+from IPython.display import clear_output
+
+class image_processing():
+
+    def __init__(self, unzip_path: str = 'INBreast') -> None:
+
+        # dictionary with key being id from df and value being image path
+        self.id_to_file = {f.split('_')[0]: f'{unzip_path}/ALL-IMGS/' + f for f in os.listdir(f'{unzip_path}/ALL-IMGS') if '.dcm' in f}
+
+    def get_dicom_image(self, filename: str, unzip_path: str = 'INBreast', compress: bool = False, full_filename: bool = False, new_width: int = 224, new_height: int = 224) -> np.array:
+
+        image_path: str = self.id_to_file[filename.__str__()] if not full_filename else f'{unzip_path}/ALL-IMGS/' + filename.__str__()
+
+        image = pydicom.dcmread(image_path).pixel_array
+
+        if compress:
+
+            return image_processing.compress_image_average(image, new_width = new_width, new_height = new_height)
+        
+        return image
+
+    @staticmethod
+    def compress_image_average(image: np.array, new_width: int = 224, new_height: int = 224) -> np.array:
+        
+        height = image.__len__()
+
+        width = image[0].__len__()
+
+        if new_height > height or new_width > width:
+
+            raise ArithmeticError(f"{Colors.RED.value}New image with shape ({new_width}, {new_height}) exceeds bounds of old image ({width}, {height}){Colors.RESET.value}")
+
+        kernel_height = height // new_height
+
+        kernel_width = width // new_width
+
+        overhang_height = height % new_height
+
+        overhang_width = width % new_width
+
+        # Generate buffer to add over hang
+
+        buffer_height = np.array([1] * overhang_height + [0] * (new_height - overhang_height))
+
+        np.random.shuffle(buffer_height)
+
+        buffer_width = np.array([1] * overhang_width + [0] * (new_width - overhang_width))
+
+        np.random.shuffle(buffer_width)
+
+        new_image = []
+
+        # Create height, width counters
+
+        counter_height = 0
+
+        for i in range(new_height): # rows
+
+            new_image.append([])
+
+            end_h = counter_height + kernel_height + buffer_height[i]
+
+            counter_width = 0
+
+            for j in range(new_width): # columns
+
+                end_w = counter_width + kernel_width + buffer_width[j]
+
+                area = image[counter_height: end_h, counter_width: end_w]
+
+                new_image[-1].append(int(area.mean()))
+
+                counter_width += kernel_width + buffer_width[j]
+
+            counter_height += kernel_height + buffer_height[i]
+
+        return np.array(new_image)
+    
+class inbreast():
+
+    @staticmethod
+    def download(unzip_path: str = 'INBreast') -> None:
+        """
+        Downloads INBreast dataset from kagglehub into folder system
+
+        Approximate run time: 1-2 min
+        """
+
+        # Checks if dataset exists
+
+        if os.path.exists(unzip_path):
+
+            print(f"{Colors.GREEN.value}Path already exists for INBreast!{Colors.RESET.value}")
+
+            return
+
+        # Download latest version
+
+        print(f"{Colors.CYAN.value}Path not found, downloading!{Colors.RESET.value}")
+
+        zip_path = kagglehub.dataset_download("martholi/inbreast") + '/inbreast.tgz'
+
+        # Extract zip
+
+        print(f"{Colors.MAGENTA.value}Extracting!{Colors.RESET.value}")
+
+        with tarfile.open(zip_path) as d:
+            d.extractall(path='INBreast')
+
+        print(f"{Colors.GREEN.value}Done!{Colors.RESET.value}")
+
+        return
+
+    @staticmethod
+    def load_dataframe(unzip_path: str = 'INBreast', drop_extra_views: bool = True) -> pd.DataFrame:
+        """
+        Returns a dataframe of the INBreast data
+        """
+
+        # Checks if dataset exists
+        if not os.path.exists(unzip_path):
+
+            raise FileNotFoundError(f"{Colors.RED.value}Path to INBreast not found{Colors.RESET.value}")
+        
+        df = pd.read_excel(f'{unzip_path}/INbreast.xls', skipfooter=2)
+
+        if drop_extra_views: df = df[(df["View"] == "CC") | (df["View"] == "MLO")]
+
+        return df
+
+    @staticmethod
+    def image_batch(num_batches: int = 8, compress: bool = False, new_width: int = 224, new_height: int = 224, df = None) -> List[Tuple[Dict, np.array]]:
+        """
+        Generator to load images in batches, conservers memory
+        Note: Final batch takes overhang
+
+        Inputs:
+            num_batches (int): INBreast ~8 GB, 8 batches works well
+            compress (bool): Compresses loaded images, through averaging
+            new_height (int): new height of compressed image
+            new_width (int): new width of compressed image
+            df (pd.Dataframe): used to get total num examples, loads df if not provided
+
+        Returns:
+            images (List[np.array]): 409 / num_batches per batch
+        """
+
+        if df is None:
+
+            print(f"{Colors.YELLOW.value}No Dataframe provided, loading!{Colors.RESET.value}")
+
+            df =  inbreast.load_dataframe(drop_extra_views = True)
+
+        len_df: int = df.__len__()
+
+        batch_size: int = math.floor(len_df / num_batches)
+
+        image_tools = image_processing()
+
+        for b in range(num_batches):
+
+            indexs = range(b * batch_size, (b+1) * batch_size if b+1 < num_batches else len_df)
+
+            data = [df.iloc[i] for i in indexs]
+            batch = [image_tools.get_dicom_image(d['File Name'].__str__()) for d in data]
+
+            yield data, batch
+
+    @staticmethod
+    def get_features(num_bacthes: int = 8, from_compressed = False, savefile: str = 'inbreast.features.json') -> Dict:
+        """
+        Calculate features from mammograms
+        Average run time: 1-2 min
+        """
+
+        if os.path.exists(savefile):
+
+            with open(savefile) as ibf:
+
+                return json.load(ibf)
+        
+        else:
+
+            batch_loader = inbreast.image_batch(num_batches=num_bacthes, compress=from_compressed)
+
+            features = {}
+
+            for i, d in enumerate(batch_loader):
+
+                print(f"{i + 1}/{num_bacthes}")
+
+                clear_output(wait=True)
+
+                data, batch = d
+
+                pred_left, pred_right = featurizer.getLaterality_parallel(batch)
+
+                pred_views, pred_views_poly =  featurizer.getView_parallel(batch)
+
+                # 
+                assert all(map(lambda l: l == pred_left.__len__(), [pred_views.__len__(), pred_views_poly.__len__()])), [pred_left.__len__(), pred_views.__len__(), pred_views_poly.__len__()]
+
+                for d, l, r, v, pv in  zip(data, pred_left, pred_right, pred_views, pred_views_poly):
+
+                    features[d['File Name'].__str__()] = {
+                        'pred_lat': [float(l), float(r)],
+                        'pred_view': [float(v_) for v_ in v],
+                        'pred_view_poly': list([float(pv_) for pv_ in pv]),
+                        'true_lat': d['Laterality'],
+                        'true_view': d['View']
+                    }
+
+                with open(savefile, 'w') as ibf:
+
+                    json.dump(features, ibf)
+
+            return features
+
+class cbis_ddsm():
+
+    @staticmethod
+    def download(unzip_path: str = 'CBIS-DDSM') -> None:
+        """
+        Downloads CBIS-DDSM dataset from kagglehub into folder system
+
+        Approximate run time: 
+        """
+
+        # Checks if dataset exists
+
+        if os.path.exists(unzip_path):
+
+            print(f"{Colors.GREEN.value}Path already exists for CBIS-DDSM!{Colors.RESET.value}")
+
+            return
+
+        # Download latest version
+
+        print(f"{Colors.CYAN.value}Path not found, downloading!{Colors.RESET.value}")
+
+        zip_path = kagglehub.dataset_download("awsaf49/cbis-ddsm-breast-cancer-image-dataset")
+
+        # Move folder into this repo
+
+        print(f"{Colors.MAGENTA.value}Moving!{Colors.RESET.value}")
+
+        shutil.move(zip_path, os.getcwd())
+
+        # rename to cbis_ddsm
+
+        os.rename(os.getcwd() + '/1', os.getcwd() + f'/{unzip_path}')
+
+        print(f"{Colors.GREEN.value}Done!{Colors.RESET.value}")
+
+        return
