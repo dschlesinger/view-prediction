@@ -1,28 +1,49 @@
 import pandas as pd, numpy as np
 import os, sys, math, json, shutil
+
 from utils.colors import Colors
 from utils.featurizer import featurizer
 
-from typing import Tuple, List, Dict, Union
+from typing import Tuple, List, Dict, Union, Literal
 
 import kagglehub
 import pydicom
+from PIL import Image
 import tarfile
 
 from IPython.display import clear_output
 
 class image_processing():
 
-    def __init__(self, unzip_path: str = 'INBreast') -> None:
+    def __init__(self, unzip_path_inbreast: str = 'INBreast', unzip_path_cbis_ddsm: str = 'CBIS-DDSM') -> None:
 
-        # dictionary with key being id from df and value being image path
-        self.id_to_file = {f.split('_')[0]: f'{unzip_path}/ALL-IMGS/' + f for f in os.listdir(f'{unzip_path}/ALL-IMGS') if '.dcm' in f}
+        # load id to file for inbreast if exists
 
-    def get_dicom_image(self, filename: str, unzip_path: str = 'INBreast', compress: bool = False, full_filename: bool = False, new_width: int = 224, new_height: int = 224) -> np.array:
+        if os.path.exists(unzip_path_inbreast):
+            self.id_to_file_inbreast = {f.split('_')[0]: f'{unzip_path_inbreast}/ALL-IMGS/' + f for f in os.listdir(f'{unzip_path_inbreast}/ALL-IMGS') if '.dcm' in f}
+        else:
+            print(f"{Colors.YELLOW.value}INBreast path not found, did not create id to file key!{Colors.YELLOW.value}")
 
-        image_path: str = self.id_to_file[filename.__str__()] if not full_filename else f'{unzip_path}/ALL-IMGS/' + filename.__str__()
+    def get_inbreast_image(self, filename: str, unzip_path: str = 'INBreast', folder: str = 'ALL-IMGS', compress: bool = False, to_rgb: bool = False, full_filename: bool = False, new_width: int = 224, new_height: int = 224) -> np.array:
+
+        image_path: str = self.id_to_file[filename.__str__()] if not full_filename else f'{unzip_path}/{folder}/' + filename.__str__()
 
         image = pydicom.dcmread(image_path).pixel_array
+
+        if compress:
+
+            image = image_processing.compress_image_average(image, new_width = new_width, new_height = new_height)
+        
+        if to_rgb:
+
+            image = image_processing.heatmap_to_rgb(image)
+        
+        return image
+    
+    @staticmethod
+    def get_cbis_ddsm_image(filename: str, unzip_path: str = 'CBIS-DDSM', folder: str = 'jpeg', compress: bool = False, new_width: int = 224, new_height: int = 224) -> np.array:
+
+        image = np.array(Image.open(f'{unzip_path}/{folder}/{filename}'))
 
         if compress:
 
@@ -87,7 +108,40 @@ class image_processing():
 
         return np.array(new_image)
     
+    def inbreast_id_to_file(self, unzip_path: str = 'INBreast') -> Dict:
+
+        self.id_to_file_inbreast = {f.split('_')[0]: f'{unzip_path}/ALL-IMGS/' + f for f in os.listdir(f'{unzip_path}/ALL-IMGS') if '.dcm' in f}
+
+        return self.id_to_file
+    
+    @staticmethod
+    def heatmap_to_rgb(image, scale_to_256: bool = True) -> np.array:
+
+        if scale_to_256:
+
+            max_value: float = np.max(image)
+
+            if max_value > 0:
+
+                image = (image.astype(np.float32) / max_value.astype(np.float32)) * 255
+
+        # Stack to 3 layers
+
+        stacked_image = np.repeat(np.expand_dims(image, axis=-1), repeats=3, axis=2)
+
+        return stacked_image.astype(np.uint8)
+
 class inbreast():
+
+    # Disk size in bytes
+    disk_size: int = None
+
+    # Number of Examples + Number usable ('CC' || 'MLO') && image
+    num_examples: int = 410
+    valid_examples: int = 409
+
+    # Main csv/metadata
+    metadata_link: str = 'INbreast.xls'
 
     @staticmethod
     def download(unzip_path: str = 'INBreast') -> None:
@@ -116,7 +170,7 @@ class inbreast():
         print(f"{Colors.MAGENTA.value}Extracting!{Colors.RESET.value}")
 
         with tarfile.open(zip_path) as d:
-            d.extractall(path='INBreast')
+            d.extractall(path=unzip_path)
 
         print(f"{Colors.GREEN.value}Done!{Colors.RESET.value}")
 
@@ -133,7 +187,7 @@ class inbreast():
 
             raise FileNotFoundError(f"{Colors.RED.value}Path to INBreast not found{Colors.RESET.value}")
         
-        df = pd.read_excel(f'{unzip_path}/INbreast.xls', skipfooter=2)
+        df = pd.read_excel(f'{unzip_path}/{inbreast.metadata_link}', skipfooter=2)
 
         if drop_extra_views: df = df[(df["View"] == "CC") | (df["View"] == "MLO")]
 
@@ -173,7 +227,7 @@ class inbreast():
             indexs = range(b * batch_size, (b+1) * batch_size if b+1 < num_batches else len_df)
 
             data = [df.iloc[i] for i in indexs]
-            batch = [image_tools.get_dicom_image(d['File Name'].__str__()) for d in data]
+            batch = [image_tools.get_inbreast_image(d['File Name'].__str__()) for d in data]
 
             yield data, batch
 
@@ -208,9 +262,6 @@ class inbreast():
 
                 pred_views, pred_views_poly =  featurizer.getView_parallel(batch)
 
-                # 
-                assert all(map(lambda l: l == pred_left.__len__(), [pred_views.__len__(), pred_views_poly.__len__()])), [pred_left.__len__(), pred_views.__len__(), pred_views_poly.__len__()]
-
                 for d, l, r, v, pv in  zip(data, pred_left, pred_right, pred_views, pred_views_poly):
 
                     features[d['File Name'].__str__()] = {
@@ -228,6 +279,16 @@ class inbreast():
             return features
 
 class cbis_ddsm():
+
+    # Disk size in bytes
+    disk_size: int = 6,319,366,144
+
+    # Number of Examples + Number usable ('CC' || 'MLO') && image
+    num_examples: int = 10,239
+    valid_examples: int = 2,857
+
+    # Main csv/metadata
+    metadata_link: str = 'csv/dicom_info.csv'
 
     @staticmethod
     def download(unzip_path: str = 'CBIS-DDSM') -> None:
@@ -264,3 +325,117 @@ class cbis_ddsm():
         print(f"{Colors.GREEN.value}Done!{Colors.RESET.value}")
 
         return
+    
+    @staticmethod
+    def load_dataframe(unzip_path: str = 'CBIS-DDSM', drop_extra_views: bool = True) -> pd.DataFrame:
+        """
+        Returns a dataframe of the CBIS-DDSM data
+
+        No extra views in CBIS-DDSM so drop_extra_views redundant
+        """
+
+         # Checks if dataset exists
+        if not os.path.exists(unzip_path):
+
+            raise FileNotFoundError(f"{Colors.RED.value}Path to CBIS-DDSM not found{Colors.RESET.value}")
+
+        df = pd.read_csv(f"{unzip_path}/{cbis_ddsm.metadata_link}")
+
+        # Only use full mammograms
+        df =  df[df['SeriesDescription'] == 'full mammogram images']
+
+        # Only take image_path, Laterality, and PatientOrientation (View)
+
+        new_df = df[['image_path', 'Laterality', 'PatientOrientation']].copy()
+        
+        new_df.rename(columns={'PatientOrientation': 'View', 'image_path': 'ImageLink'}, inplace=True)
+
+        new_df['ImageLink'] = new_df['ImageLink'].apply(lambda l: '/'.join(l.split('/')[2:4]))
+        
+        return new_df
+
+    
+    @staticmethod
+    def image_batch(num_batches: int = 8, compress: bool = False, new_width: int = 224, new_height: int = 224, df = None) -> List[Tuple[Dict, np.array]]:
+        """
+        Generator to load images in batches, conservers memory
+        Note: Final batch takes overhang
+
+        Inputs:
+            num_batches (int): CBIS-DDSM ~6 GB, 8 batches works well
+            compress (bool): Compresses loaded images, through averaging
+            new_height (int): new height of compressed image
+            new_width (int): new width of compressed image
+            df (pd.Dataframe): used to get total num examples, loads df if not provided
+
+        Returns:
+            images (List[np.array]): 3568 / num_batches per batch
+        """
+
+        if df is None:
+
+            print(f"{Colors.YELLOW.value}No Dataframe provided, loading!{Colors.RESET.value}")
+
+            df =  cbis_ddsm.load_dataframe()
+
+        len_df: int = df.__len__()
+
+        batch_size: int = math.floor(len_df / num_batches)
+
+        image_tools = image_processing()
+
+        for b in range(num_batches):
+
+            indexs = range(b * batch_size, (b+1) * batch_size if b+1 < num_batches else len_df)
+
+            data = [df.iloc[i] for i in indexs]
+            batch = [image_tools.get_cbis_ddsm_image(d['ImageLink']) for d in data]
+
+            yield data, batch
+
+    @staticmethod
+    def get_features(num_bacthes: int = 8, from_compressed = False, savefile: str = 'cbis_ddsm.features.json') -> Dict:
+        """
+        Calculate features from mammograms
+        Average run time: 1-2 min
+        """
+
+        if os.path.exists(savefile):
+
+            with open(savefile) as ibf:
+
+                return json.load(ibf)
+        
+        else:
+
+            batch_loader = cbis_ddsm.image_batch(num_batches=num_bacthes, compress=from_compressed)
+
+            features = {}
+
+            for i, d in enumerate(batch_loader):
+
+                print(f"{i + 1}/{num_bacthes}")
+
+                clear_output(wait=True)
+
+                data, batch = d
+
+                pred_left, pred_right = featurizer.getLaterality_parallel(batch)
+
+                pred_views, pred_views_poly =  featurizer.getView_parallel(batch)
+
+                for d, l, r, v, pv in  zip(data, pred_left, pred_right, pred_views, pred_views_poly):
+
+                    features[d['ImageLink'].__str__()] = {
+                        'pred_lat': [float(l), float(r)],
+                        'pred_view': [float(v_) for v_ in v],
+                        'pred_view_poly': list([float(pv_) for pv_ in pv]),
+                        'true_lat': d['Laterality'],
+                        'true_view': d['View']
+                    }
+
+                with open(savefile, 'w') as ibf:
+
+                    json.dump(features, ibf)
+
+            return features
