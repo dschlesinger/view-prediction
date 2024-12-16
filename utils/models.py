@@ -105,3 +105,60 @@ class models():
         )
 
         return model
+    
+    def SmallCNN(self, lr: float = 1e-2, 
+                metrics: List[str] = ['accuracy'],
+                **kwargs) -> tf.keras.models.Model:
+        
+        if self.feature_or_images != 'images': 
+
+            raise ValueError(f"{Colors.RED.value}SmallCNN requires image data, not features!{Colors.RED.value}")
+        
+        def build_SmallCNN():
+
+            input_ = tf.keras.Input(shape=(224,224,3))
+
+            x = TFLayers.Conv2D(32, (8, 8), activation='relu')(input_)
+
+            # 56, 56, 1
+            x = TFLayers.MaxPooling2D((4, 4))(x)
+
+            x = TFLayers.Conv2D(32, (4, 4), activation='relu')(x)
+
+            # 7, 7, 1
+            x = TFLayers.MaxPooling2D((4, 4))(x)
+
+            x = TFLayers.Conv2D(32, (3, 3), activation='relu', padding='same')(x)
+
+            # 49
+            x = TFLayers.Flatten()(x)
+
+            x = TFLayers.Dense(28, activation='relu')(x)
+
+            x = TFLayers.Dense(14, activation='relu')(x)
+
+            x = TFLayers.Dense(1, activation='sigmoid')(x)
+
+            model = tf.keras.models.Model(inputs=input_, outputs=x)
+
+            model.compile(loss=tf.keras.losses.BinaryCrossentropy(), optimizer=tf.keras.optimizers.Adam(learning_rate=lr), metrics=metrics)
+
+            return model
+        
+        model = build_SmallCNN()
+
+        model.fit(self.x_train, self.y_train, **kwargs)
+
+        model_eval = model.evaluate(self.x_test, self.y_test)
+
+        print(
+            f"""
+            ResNet stats
+
+            BinaryCrossentropy Loss: {model_eval[0]}
+            {'\n'.join([f'{metric}: {value}' for metric, value in zip(metrics, model_eval[1:])])}
+            """
+        )
+
+        return model
+
