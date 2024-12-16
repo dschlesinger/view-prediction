@@ -8,3 +8,6 @@ CBIS-DDSM
 
 # Other
 __pycache__
+
+# Miscellaneous
+*.ignore.*

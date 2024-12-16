@@ -313,6 +313,20 @@ class inbreast():
         
         return list(map(lambda x: np.array(x), [x_train, x_test, y_train, y_test]))
     
+    @staticmethod
+    def delete(unzip_path: str = Settings.INBreast.unzip_path) -> None:
+
+        if not os.path.exists(unzip_path):
+            print(f'{Colors.YELLOW.value}INBreast data not found!{Colors.RESET.value}')
+
+            return
+        
+        if input('Are you sure (y/n)?: ').lower() in ['yes', 'y']:
+
+            shutil.rmtree(unzip_path)
+
+        print(f'{Colors.GREEN.value}Sucsessfully removed INBreast!{Colors.RESET.value}')
+        
 class cbis_ddsm():
 
     # Disk size in bytes
@@ -557,3 +571,18 @@ class cbis_ddsm():
             return list(map(lambda x: np.array(x), [x_train, x_test, x_val, y_train, y_test, y_val]))
         
         return list(map(lambda x: np.array(x), [x_train, x_test, y_train, y_test]))
+    
+    @staticmethod
+    def delete(unzip_path: str = Settings.CBIS_DDSM.unzip_path) -> None:
+
+        if not os.path.exists(unzip_path):
+            print(f'{Colors.YELLOW.value}CBIS-DDSM data not found!{Colors.RESET.value}')
+
+            return
+        
+        if input('Are you sure (y/n)?: ').lower() in ['yes', 'y']:
+
+            shutil.rmtree(unzip_path)
+
+        print(f'{Colors.GREEN.value}Sucsessfully removed CBIS-DDSM!{Colors.RESET.value}')
+
