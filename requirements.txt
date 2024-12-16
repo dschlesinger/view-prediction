@@ -6,3 +6,4 @@ pydicom
 matplotlib
 Pillow
 scikit-learn
+tensorflow

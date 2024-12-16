@@ -3,9 +3,11 @@ import os, sys, math, json, shutil
 
 from utils.colors import Colors
 from utils.featurizer import featurizer
+from utils.settings import Settings
 
-from typing import Tuple, List, Dict, Union, Literal
+from typing import Tuple, List, Dict, Union, Literal, Callable
 
+import sklearn
 import kagglehub
 import pydicom
 from PIL import Image
@@ -36,18 +38,22 @@ class image_processing():
         
         if to_rgb:
 
-            image = image_processing.heatmap_to_rgb(image)
+            image = image_processing.heatmap_to_rgb(image, scale_to_256=True)
         
         return image
     
     @staticmethod
-    def get_cbis_ddsm_image(filename: str, unzip_path: str = 'CBIS-DDSM', folder: str = 'jpeg', compress: bool = False, new_width: int = 224, new_height: int = 224) -> np.array:
+    def get_cbis_ddsm_image(filename: str, unzip_path: str = 'CBIS-DDSM', folder: str = 'jpeg', compress: bool = False, to_rgb: bool = False, new_width: int = 224, new_height: int = 224) -> np.array:
 
         image = np.array(Image.open(f'{unzip_path}/{folder}/{filename}'))
 
         if compress:
 
-            return image_processing.compress_image_average(image, new_width = new_width, new_height = new_height)
+            image =  image_processing.compress_image_average(image, new_width = new_width, new_height = new_height)
+        
+        if to_rgb:
+
+            image = image_processing.heatmap_to_rgb(image, scale_to_256=True)
         
         return image
 
@@ -144,7 +150,7 @@ class inbreast():
     metadata_link: str = 'INbreast.xls'
 
     @staticmethod
-    def download(unzip_path: str = 'INBreast') -> None:
+    def download(unzip_path: str = Settings.INBreast.unzip_path) -> None:
         """
         Downloads INBreast dataset from kagglehub into folder system
 
@@ -177,7 +183,7 @@ class inbreast():
         return
 
     @staticmethod
-    def load_dataframe(unzip_path: str = 'INBreast', drop_extra_views: bool = True) -> pd.DataFrame:
+    def load_dataframe(unzip_path: str = Settings.INBreast.unzip_path, drop_extra_views: bool = True) -> pd.DataFrame:
         """
         Returns a dataframe of the INBreast data
         """
@@ -194,7 +200,7 @@ class inbreast():
         return df
 
     @staticmethod
-    def image_batch(num_batches: int = 8, compress: bool = False, new_width: int = 224, new_height: int = 224, df = None) -> List[Tuple[Dict, np.array]]:
+    def image_batch(num_batches: int = 8, compress: bool = False, new_width: int = Settings.General.def_compress_width, new_height: int = Settings.General.def_compress_width, df = None) -> List[Tuple[Dict, np.array]]:
         """
         Generator to load images in batches, conservers memory
         Note: Final batch takes overhang
@@ -213,6 +219,8 @@ class inbreast():
         if df is None:
 
             print(f"{Colors.YELLOW.value}No Dataframe provided, loading!{Colors.RESET.value}")
+
+            clear_output(wait=True)
 
             df =  inbreast.load_dataframe(drop_extra_views = True)
 
@@ -277,7 +285,34 @@ class inbreast():
                     json.dump(features, ibf)
 
             return features
+        
+    @staticmethod
+    def get_xy(test_split: float = 0.2, validation_split: float = None, random_state: int = 42) -> Tuple[np.array]:
+        """
+        Returns xt, xtest, xval, yt, ytest, yval if validation_split else no xval, yval
+        """
 
+        features = inbreast.get_features()
+
+        x = [d['pred_lat'] + d['pred_view'] + d['pred_view_poly'] for d in features.values()]
+
+        y = [1 if d['true_view'] == 'MLO' else 0 for d in features.values()]
+
+        x_train, x_test, y_train, y_test = sklearn.model_selection.train_test_split(x, y, test_size=test_split, random_state=random_state)
+
+        # Calculate % of train split to take as validation, don't if 0 or None
+        if validation_split:
+            train_split = (1 - test_split)
+
+            # To normalize for taking from train split
+            validation_split = validation_split / train_split
+
+            x_train, x_val, y_train, y_val = sklearn.model_selection.train_test_split(x_train, y_train, test_size=validation_split, random_state=random_state)
+
+            return list(map(lambda x: np.array(x), [x_train, x_test, x_val, y_train, y_test, y_val]))
+        
+        return list(map(lambda x: np.array(x), [x_train, x_test, y_train, y_test]))
+    
 class cbis_ddsm():
 
     # Disk size in bytes
@@ -351,6 +386,9 @@ class cbis_ddsm():
         new_df.rename(columns={'PatientOrientation': 'View', 'image_path': 'ImageLink'}, inplace=True)
 
         new_df['ImageLink'] = new_df['ImageLink'].apply(lambda l: '/'.join(l.split('/')[2:4]))
+
+        # resets range to 1...2,857
+        new_df.reset_index(drop=True, inplace=True)
         
         return new_df
 
@@ -375,6 +413,8 @@ class cbis_ddsm():
         if df is None:
 
             print(f"{Colors.YELLOW.value}No Dataframe provided, loading!{Colors.RESET.value}")
+
+            clear_output(wait=True)
 
             df =  cbis_ddsm.load_dataframe()
 
@@ -439,3 +479,81 @@ class cbis_ddsm():
                     json.dump(features, ibf)
 
             return features
+
+    @staticmethod
+    def get_xy(test_split: float = 0.2, validation_split: float = None, random_state: int = 42) -> Tuple[np.array]:
+        """
+        Returns xt, xtest, xval, yt, ytest, yval if validation_split else no xval, yval
+        """
+
+        features = cbis_ddsm.get_features()
+
+        x = [d['pred_lat'] + d['pred_view'] + d['pred_view_poly'] for d in features.values()]
+
+        y = [1 if d['true_view'] == 'MLO' else 0 for d in features.values()]
+
+        x_train, x_test, y_train, y_test = sklearn.model_selection.train_test_split(x, y, test_size=test_split, random_state=random_state)
+
+        # Calculate % of train split to take as validation, don't if 0 or None
+        if validation_split:
+            train_split = (1 - test_split)
+
+            # To normalize for taking from train split
+            validation_split = validation_split / train_split
+
+            x_train, x_val, y_train, y_val = sklearn.model_selection.train_test_split(x_train, y_train, test_size=validation_split, random_state=random_state)
+
+            return list(map(lambda x: np.array(x), [x_train, x_test, x_val, y_train, y_test, y_val]))
+        
+        return list(map(lambda x: np.array(x), [x_train, x_test, y_train, y_test]))
+    
+    @staticmethod
+    def get_images(compress: bool = True, new_width: int = 224, new_height: int = 224, df = None, test_split: float = 0.2, validation_split: float = None, random_state: int = 42) -> Tuple[np.array]:
+        """
+        Loads images and logits for image based analysis
+
+        Warning, setting compress to False could lead to fry RAM, please use with caution
+
+        Average time: 10-15 min
+        """
+
+        if not compress: print(f"{Colors.RED.value}Warning compress = False, this will take about {round(cbis_ddsm.disk_size / (1024 ** 3), 2)} GB of RAM!{Colors.RED.value}")
+
+        if df is None:
+
+            print(f"{Colors.YELLOW.value}No Dataframe provided, loading!{Colors.RESET.value}")
+
+            clear_output(wait=True)
+
+            df =  cbis_ddsm.load_dataframe()
+
+        x = []
+
+        y = []
+
+        total_images: int = df.__len__()
+
+        for i, image in df.iterrows():
+
+            print(f"{i + 1}/{total_images}")
+
+            clear_output(wait=True)
+
+            x.append(image_processing.get_cbis_ddsm_image(image['ImageLink'], compress=compress, new_height=new_height, new_width=new_width, to_rgb=True))
+
+            y.append(1 if image['View'] == 'MLO' else 0)
+
+        x_train, x_test, y_train, y_test = sklearn.model_selection.train_test_split(x, y, test_size=test_split, random_state=random_state)
+
+        # Calculate % of train split to take as validation, don't if 0 or None
+        if validation_split:
+            train_split = (1 - test_split)
+
+            # To normalize for taking from train split
+            validation_split = validation_split / train_split
+
+            x_train, x_val, y_train, y_val = sklearn.model_selection.train_test_split(x_train, y_train, test_size=validation_split, random_state=random_state)
+
+            return list(map(lambda x: np.array(x), [x_train, x_test, x_val, y_train, y_test, y_val]))
+        
+        return list(map(lambda x: np.array(x), [x_train, x_test, y_train, y_test]))

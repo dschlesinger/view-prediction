@@ -2,8 +2,9 @@
 INBreast
 CBIS-DDSM
 
-# Feature saves
+# Feature and Image saves
 *.features.*
+*.images.*
 
 # Other
 __pycache__
