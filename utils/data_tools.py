@@ -26,9 +26,9 @@ class image_processing():
         else:
             print(f"{Colors.YELLOW.value}INBreast path not found, did not create id to file key!{Colors.YELLOW.value}")
 
-    def get_inbreast_image(self, filename: str, unzip_path: str = 'INBreast', folder: str = 'ALL-IMGS', compress: bool = False, to_rgb: bool = False, full_filename: bool = False, new_width: int = 224, new_height: int = 224) -> np.array:
+    def get_inbreast_image(self, filename: str, unzip_path: str = 'INBreast', folder: str = 'ALL-IMGS', compress: bool = False, to_rgb: bool = False, image_scale: Literal['None', '256', 'Normalize'] = 'None', full_filename: bool = False, new_width: int = 224, new_height: int = 224) -> np.array:
 
-        image_path: str = self.id_to_file[filename.__str__()] if not full_filename else f'{unzip_path}/{folder}/' + filename.__str__()
+        image_path: str = self.id_to_file_inbreast[filename.__str__()] if not full_filename else f'{unzip_path}/{folder}/' + filename.__str__()
 
         image = pydicom.dcmread(image_path).pixel_array
 
@@ -38,12 +38,12 @@ class image_processing():
         
         if to_rgb:
 
-            image = image_processing.heatmap_to_rgb(image, scale_to_256=True)
+            image = image_processing.heatmap_to_rgb(image, image_scale=image_scale)
         
         return image
     
     @staticmethod
-    def get_cbis_ddsm_image(filename: str, unzip_path: str = 'CBIS-DDSM', folder: str = 'jpeg', compress: bool = False, to_rgb: bool = False, new_width: int = 224, new_height: int = 224) -> np.array:
+    def get_cbis_ddsm_image(filename: str, unzip_path: str = 'CBIS-DDSM', folder: str = 'jpeg', compress: bool = False, to_rgb: bool = False, image_scale: Literal['None', '256', 'Normalize'] = 'None', new_width: int = 224, new_height: int = 224) -> np.array:
 
         image = np.array(Image.open(f'{unzip_path}/{folder}/{filename}'))
 
@@ -53,7 +53,7 @@ class image_processing():
         
         if to_rgb:
 
-            image = image_processing.heatmap_to_rgb(image, scale_to_256=True)
+            image = image_processing.heatmap_to_rgb(image, image_scale=image_scale)
         
         return image
 
@@ -113,29 +113,23 @@ class image_processing():
             counter_height += kernel_height + buffer_height[i]
 
         return np.array(new_image)
-    
-    def inbreast_id_to_file(self, unzip_path: str = 'INBreast') -> Dict:
-
-        self.id_to_file_inbreast = {f.split('_')[0]: f'{unzip_path}/ALL-IMGS/' + f for f in os.listdir(f'{unzip_path}/ALL-IMGS') if '.dcm' in f}
-
-        return self.id_to_file
-    
+       
     @staticmethod
-    def heatmap_to_rgb(image, scale_to_256: bool = True) -> np.array:
+    def heatmap_to_rgb(image, image_scale: Literal['None', '256', 'Normalize'] = 'None') -> np.array:
 
-        if scale_to_256:
+        if image_scale != 'None':
 
             max_value: float = np.max(image)
 
             if max_value > 0:
 
-                image = (image.astype(np.float32) / max_value.astype(np.float32)) * 255
+                image = (image.astype(np.float32) / max_value.astype(np.float32)) * (255 if image_scale == '256' else 1)
 
         # Stack to 3 layers
 
         stacked_image = np.repeat(np.expand_dims(image, axis=-1), repeats=3, axis=2)
 
-        return stacked_image.astype(np.uint8)
+        return stacked_image
 
 class inbreast():
 
@@ -196,6 +190,8 @@ class inbreast():
         df = pd.read_excel(f'{unzip_path}/{inbreast.metadata_link}', skipfooter=2)
 
         if drop_extra_views: df = df[(df["View"] == "CC") | (df["View"] == "MLO")]
+
+        df.reset_index()
 
         return df
 
@@ -297,6 +293,59 @@ class inbreast():
         x = [d['pred_lat'] + d['pred_view'] + d['pred_view_poly'] for d in features.values()]
 
         y = [1 if d['true_view'] == 'MLO' else 0 for d in features.values()]
+
+        x_train, x_test, y_train, y_test = sklearn.model_selection.train_test_split(x, y, test_size=test_split, random_state=random_state)
+
+        # Calculate % of train split to take as validation, don't if 0 or None
+        if validation_split:
+            train_split = (1 - test_split)
+
+            # To normalize for taking from train split
+            validation_split = validation_split / train_split
+
+            x_train, x_val, y_train, y_val = sklearn.model_selection.train_test_split(x_train, y_train, test_size=validation_split, random_state=random_state)
+
+            return list(map(lambda x: np.array(x), [x_train, x_test, x_val, y_train, y_test, y_val]))
+        
+        return list(map(lambda x: np.array(x), [x_train, x_test, y_train, y_test]))
+    
+    @staticmethod
+    def get_images(compress: bool = True, new_width: int = 224, new_height: int = 224, df = None, test_split: float = 0.2, normalize: bool = True, validation_split: float = None, random_state: int = 42) -> Tuple[np.array]:
+        """
+        Loads images and logits for image based analysis
+
+        Warning, setting compress to False could lead to fry RAM, please use with caution
+
+        Average time: 3-5 min
+        """
+
+        if not compress: print(f"{Colors.RED.value}Warning compress = False, this will take about {round(inbreast.disk_size / (1024 ** 3), 2)} GB of RAM!{Colors.RED.value}")
+
+        if df is None:
+
+            print(f"{Colors.YELLOW.value}No Dataframe provided, loading!{Colors.RESET.value}")
+
+            clear_output(wait=True)
+
+            df =  inbreast.load_dataframe()
+
+        x = []
+
+        y = []
+
+        total_images: int = df.__len__()
+
+        for i, image in df.iterrows():
+
+            print(f"{i}/{total_images}")
+
+            clear_output(wait=True)
+
+            img_tool = image_processing()
+
+            x.append(img_tool.get_inbreast_image(image['File Name'], compress=compress, new_height=new_height, new_width=new_width, to_rgb=True, image_scale='Normalize'))
+
+            y.append(1 if image['View'] == 'MLO' else 0)
 
         x_train, x_test, y_train, y_test = sklearn.model_selection.train_test_split(x, y, test_size=test_split, random_state=random_state)
 
@@ -549,11 +598,11 @@ class cbis_ddsm():
 
         for i, image in df.iterrows():
 
-            print(f"{i + 1}/{total_images}")
+            print(f"{i}/{total_images}")
 
             clear_output(wait=True)
 
-            x.append(image_processing.get_cbis_ddsm_image(image['ImageLink'], compress=compress, new_height=new_height, new_width=new_width, to_rgb=True))
+            x.append(image_processing.get_cbis_ddsm_image(image['ImageLink'], compress=compress, new_height=new_height, new_width=new_width, to_rgb=True, image_scale='Normalize'))
 
             y.append(1 if image['View'] == 'MLO' else 0)
 
