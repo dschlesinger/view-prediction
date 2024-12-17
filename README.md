@@ -1,5 +1,5 @@
 # Repository for <b>SAMMY</b>, a CNN Based Model to Predict Unlabeled Mammography Metadata (Left/Right, MLO/CC)
-### <b>SAMMY</b> (Smart Automated Mammography Metadata Yielder)
+### <b>SAMMY</b> (Small Automated Mammography Metadata Yielder)
 
 ### Utils Folder
 #### data_tools.py
