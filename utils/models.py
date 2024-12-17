@@ -159,7 +159,7 @@ class models():
 
         print(
             f"""
-            ResNet stats
+            SmallCNN stats
 
             BinaryCrossentropy Loss: {model_eval[0]}
             {'\n'.join([f'{metric}: {value}' for metric, value in zip(metrics, model_eval[1:])])}
