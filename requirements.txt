@@ -7,3 +7,5 @@ matplotlib
 Pillow
 scikit-learn
 tensorflow
+grad-cam
+opencv-python

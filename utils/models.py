@@ -126,17 +126,18 @@ class models():
 
             x = TFLayers.Conv2D(32, (8, 8), activation='relu')(input_)
 
-            # 56, 56, 1
+            # 56, 56, 3
             x = TFLayers.MaxPooling2D((4, 4))(x)
 
             x = TFLayers.Conv2D(32, (4, 4), activation='relu')(x)
 
-            # 7, 7, 1
+            # 7, 7, 3
             x = TFLayers.MaxPooling2D((4, 4))(x)
+            
+            # For GradCAM
+            x = TFLayers.Conv2D(32, (3, 3), activation='relu', padding='same', name='last-conv-layer')(x)
 
-            x = TFLayers.Conv2D(32, (3, 3), activation='relu', padding='same')(x)
-
-            # 49
+            # 147
             x = TFLayers.Flatten()(x)
 
             x = TFLayers.Dense(28, activation='relu')(x)
