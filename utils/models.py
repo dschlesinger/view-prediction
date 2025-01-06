@@ -12,6 +12,12 @@ from sklearn.ensemble import RandomForestClassifier
 from tensorflow.keras.applications import ResNet50
 from tensorflow.keras import layers as TFLayers
 
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+
+
 # Import metrics
 from sklearn.metrics import accuracy_score, roc_auc_score
 
@@ -36,14 +42,22 @@ class models():
 
         self.random_state = random_state
 
+        self.is_loader: bool = len(get_xy) == 2
+
         self.if_val: bool = len(get_xy) == 6
 
-        # Gets x_train first example and finds dimensions
-        example_dim: int = get_xy[0][0].shape.__len__()
+        if not self.is_loader:
 
-        self.feature_or_images: bool = 'images' if example_dim > 1 else 'features'
+            # Gets x_train first example and finds dimensions
+            example_dim: int = get_xy[0][0].shape.__len__()
 
-        if self.if_val:
+            self.feature_or_images: bool = 'images' if example_dim > 1 else 'features'
+
+        if self.is_loader:
+
+            self.train, self.test = get_xy
+
+        elif self.if_val:
 
             self.x_train, self.x_test, self.x_val, self.y_train, self.y_test, self.y_val = get_xy
 
@@ -168,6 +182,81 @@ class models():
         )
 
         return model
+    
+    def SmallCNN_torch(self, lr: float = 1e-2, 
+                metrics: List[str] = ['accuracy'],
+                **kwargs) -> tf.keras.models.Model:
+        
+        # if self.feature_or_images != 'images': 
+
+        #     raise ValueError(f"{Colors.RED.value}SmallCNN requires image data, not features!{Colors.RED.value}")
+
+        class SmallCNN(nn.Module):
+            def __init__(self):
+                super(SmallCNN, self).__init__()
+                self.conv1 = nn.Conv2d(3, 16, kernel_size=7, padding='same')
+                self.pool1 = nn.MaxPool2d(kernel_size=2)
+                self.conv2 = nn.Conv2d(16, 32, kernel_size=4, padding='same')
+                self.pool2 = nn.MaxPool2d(kernel_size=2)
+                self.conv3 = nn.Conv2d(32, 16, kernel_size=4, padding='same')
+                self.flatten = nn.Flatten()
+                self.fc1 = nn.Linear(16 * 7 * 7, 28)
+                self.fc2 = nn.Linear(28, 14)
+                self.fc3 = nn.Linear(14, 10)
+                self.sigmoid = nn.Softmax(dim=1)
+
+            def forward(self, x):
+                x = torch.relu(self.conv1(x))
+                x = self.pool1(x)
+                x = torch.relu(self.conv2(x))
+                x = self.pool2(x)
+                x = torch.relu(self.conv3(x))
+                x = self.flatten(x)
+                x = torch.relu(self.fc1(x))
+                x = torch.relu(self.fc2(x))
+                x = self.sigmoid(self.fc3(x))
+                return x
+
+        def train_and_evaluate(model, train_data, test_data, lr=1e-2, epochs=10, batch_size=32):
+
+            criterion = nn.CrossEntropyLoss()
+            optimizer = optim.Adam(model.parameters(), lr=lr)
+
+            for epoch in range(epochs):
+                model.train()
+                train_loss = 0.0
+                for data in train_data:
+                    inputs, targets = data
+                    optimizer.zero_grad()
+                    outputs = model(inputs)
+                    loss = criterion(outputs.squeeze(), targets)
+                    loss.backward()
+                    optimizer.step()
+                    train_loss += loss.item()
+
+                print(f"Epoch {epoch + 1}/{epochs}, Loss: {train_loss / len(test_data):.4f}")
+
+            model.eval()
+            with torch.no_grad():
+                test_loss = 0.0
+                correct = 0
+                total = 0
+                for data in test_data:
+                    inputs, targets = data
+                    outputs = model(inputs)
+                    loss = criterion(outputs.squeeze(), targets)
+                    test_loss += loss.item()
+                    predicted = (outputs.squeeze() > 0.5).float()
+                    correct += (predicted == targets).sum().item()
+                    total += targets.size(0)
+
+            print(f"\nSmallCNN stats")
+            print(f"BinaryCrossentropy Loss: {test_loss / len(test_data):.4f}")
+            print(f"Accuracy: {100 * correct / total:.2f}%")
+
+            return model
+
+        return train_and_evaluate(SmallCNN(), self.train, self.test)
 
     def grid_search(self, get_model: Callable, metric: Literal['accuracy', 'auc'] = 'accuracy', param_combinations: List[Dict] = None, training_kwargs: Dict = {}, **kwargs) -> List[Tuple[Dict[str, Any], list[Any, float]]]:
         """

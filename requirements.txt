@@ -7,5 +7,7 @@ matplotlib
 Pillow
 scikit-learn
 tensorflow
+keras
 grad-cam
 opencv-python
+torch

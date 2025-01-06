@@ -196,7 +196,7 @@ class inbreast():
         return df
 
     @staticmethod
-    def image_batch(num_batches: int = 8, compress: bool = False, new_width: int = Settings.General.def_compress_width, new_height: int = Settings.General.def_compress_width, df = None) -> List[Tuple[Dict, np.array]]:
+    def image_batch(num_batches: int = 8, compress: bool = False, image_scale: Literal['None', '256', 'Normalize'] = 'None', to_rgb: bool = False,  new_width: int = Settings.General.def_compress_width, new_height: int = Settings.General.def_compress_width, df = None) -> List[Tuple[Dict, np.array]]:
         """
         Generator to load images in batches, conservers memory
         Note: Final batch takes overhang
@@ -231,7 +231,7 @@ class inbreast():
             indexs = range(b * batch_size, (b+1) * batch_size if b+1 < num_batches else len_df)
 
             data = [df.iloc[i] for i in indexs]
-            batch = [image_tools.get_inbreast_image(d['File Name'].__str__()) for d in data]
+            batch = [image_tools.get_inbreast_image(d['File Name'].__str__(), compress=compress, image_scale=image_scale, to_rgb=to_rgb) for d in data]
 
             yield data, batch
 
