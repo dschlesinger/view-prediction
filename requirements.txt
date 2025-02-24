@@ -11,3 +11,4 @@ keras
 grad-cam
 opencv-python
 torch
+pydot
