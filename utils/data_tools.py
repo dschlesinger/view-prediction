@@ -125,11 +125,11 @@ class image_processing():
 
                 image = (image.astype(np.float32) / max_value.astype(np.float32)) * (255 if image_scale == '256' else 1)
 
-        # Stack to 3 layers
+        # # Stack to 3 layers
 
-        stacked_image = np.repeat(np.expand_dims(image, axis=-1), repeats=3, axis=2)
+        # stacked_image = np.repeat(np.expand_dims(image, axis=-1), repeats=3, axis=2)
 
-        return stacked_image
+        return image
 
 class inbreast():
 
@@ -209,7 +209,7 @@ class inbreast():
             df (pd.Dataframe): used to get total num examples, loads df if not provided
 
         Returns:
-            images (List[np.array]): 409 / num_batches per batch
+            images (dataframe, List[np.array]): 409 / num_batches per batch
         """
 
         if df is None:
@@ -230,8 +230,10 @@ class inbreast():
 
             indexs = range(b * batch_size, (b+1) * batch_size if b+1 < num_batches else len_df)
 
-            data = [df.iloc[i] for i in indexs]
-            batch = [image_tools.get_inbreast_image(d['File Name'].__str__(), compress=compress, image_scale=image_scale, to_rgb=to_rgb) for d in data]
+            l = list(indexs)
+
+            data = df.iloc[l[0]: l[-1]]
+            batch = [image_tools.get_inbreast_image(d['File Name'].__str__(), compress=compress, image_scale=image_scale, to_rgb=to_rgb) for i, d in data.iterrows()]
 
             yield data, batch
 
