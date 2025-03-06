@@ -17,7 +17,7 @@ Runs a grid search of random forests on the cbis_ddsm dataset and validates the 
 #### small_cnn.py <b>(SAMMY)</b>
 Trains a cnn on the cbis_ddsm dataset and validates on inbreast, 99% accuracy on inbreast
 
-#### Datasets Used:
+### Datasets Used:
 
   Sawyer-Lee, R., Gimenez, F., Hoogi, A., & Rubin, D. (2016). Curated Breast Imaging Subset of Digital Database for Screening Mammography (CBIS-DDSM) [Data set]. The Cancer Imaging Archive. https://doi.org/10.7937/K9/TCIA.2016.7O02S9CY
 
