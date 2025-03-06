@@ -13,3 +13,4 @@ opencv-python
 torch
 pydot
 lightning
+torchmetrics

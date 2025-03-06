@@ -12,6 +12,7 @@ import os, sys
 
 # Torch imports
 import torch
+from torchmetrics import classification
 from torch import nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
@@ -34,13 +35,27 @@ class Color(Enum):
     CYAN = "\033[36m"
     WHITE = "\033[37m"
 
-    def __call__(self, text: str, **kwargs) -> None:
+    def __call__(self, text: str, end:str='', **kwargs) -> None:
 
-        print(self.value + text + Color.RESET.value, **kwargs)
+        print(self.value + text + Color.RESET.value, end=end, **kwargs)
     
     def apply(self, text: str) -> None:
 
         return self.value + text + Color.RESET.value
+
+def color_score(s: float):
+    """Assumes 0 -> 1 Scale, returns colored text"""
+
+    match s:
+
+        case x if x < 0.33:
+            return Color.RED.apply
+
+        case x if x < 0.66:
+            return Color.YELLOW.apply
+
+        case _:
+            return Color.GREEN.apply
 
 # Settings
 MODEL_PATH: str = "models/SAMMY.pt"
@@ -49,7 +64,7 @@ DATA_CSV: str = pd.read_excel("INBreast/INbreast.xls", dtype=str)               
 IMAGE_PATH_COL: str = "File Name"                                                # <--------- Column for associating images w entries
 IMAGE_COL_FIND: Callable = lambda image_col_path, file: image_col_path == file.split("_")[0] # <--------- If Image Column not exactly file name, None if Image Col == File Name
 VIEW_COL: str = "View"                                                           # <--------- Column to get label
-MODE: Literal["predict", "evaluate"] = "evaluate"
+MODE: Literal["predict", "evaluate"] = "predict"
 SUPPORTED_FILE_TYPES: Set[str] = {"dcm", "jpeg", "jpg", "png", "webp"}
 # raise NotImplementedError(Color.RED.apply("Make your changes here!!!"))
 
@@ -146,7 +161,7 @@ class EagerLoader(Dataset):
         images = []
         labels = []
 
-        self.img_paths_ = os.listdir(self.path) if isinstance(self.path, str) else self.path
+        self.img_paths_ = list(filter(lambda x: x.split(".")[-1] in SUPPORTED_FILE_TYPES, os.listdir(self.path))) if isinstance(self.path, str) else self.path
 
         l = self.img_paths_.__len__()
 
@@ -154,16 +169,10 @@ class EagerLoader(Dataset):
 
             update: str = f"{i+1}/{l}\r"
 
-            match (i+1) / l:
-
-                case x if x < 0.33:
-                    Color.RED(update, end='')
-
-                case x if x < 0.66:
-                    Color.YELLOW(update, end='')
-
-                case _:
-                    Color.GREEN(update, end='')
+            print(
+                color_score((i+1)/l)(update),
+                end=''
+            )
 
             # Ignore documentation or csv files
             if ipath.split('.')[-1] not in SUPPORTED_FILE_TYPES:
@@ -179,16 +188,20 @@ class EagerLoader(Dataset):
                     continue
 
                 labels.append(
-                    1 if \
+                    [0, 1] if \
                         found_row.iloc[0][VIEW_COL] == "MLO"
-                    else 0
+                    else [1, 0]
                 )
+
+            else:
+
+                labels.append(None)
             
             images.append(
                 load_image(self.path + '/' + ipath).to(torch.float32)
             )
 
-        self.images = torch.unsqueeze(torch.concat(images), -1)
+        self.images = torch.unsqueeze(torch.concat(images), -1).permute((0,3,1,2))
 
         if MODE == "evaluate":
 
@@ -196,19 +209,14 @@ class EagerLoader(Dataset):
 
         else:
 
-            self.labels = torch.zeros(size=(l,1))
+            self.labels = torch.full(fill_value=-1, size=(l,2))
     
     def __len__(self):
         return self.images.shape[0]
 
     def __getitem__(self, idx):
 
-        if MODE == "evaluate":
-
-            return self.images[idx], self.labels[idx]
-        
-        # Not Eval
-        return self.images[idx]
+        return torch.Tensor(self.images[idx]), torch.Tensor(self.labels[idx])
 
 # Custom Dataset functionality for Less Memory Overhead
 class LazyLoader(Dataset):
@@ -231,7 +239,7 @@ class LazyLoader(Dataset):
     def load(self) -> None:
         """Saves list of paths to Images"""
 
-        self.img_paths_ = os.listdir(self.path) if isinstance(self.path, str) else self.path
+        self.img_paths_ = list(filter(lambda x: x.split(".")[-1] in SUPPORTED_FILE_TYPES, os.listdir(self.path))) if isinstance(self.path, str) else self.path
     
     def __len__(self):
         return self.img_paths_.__len__()
@@ -240,39 +248,41 @@ class LazyLoader(Dataset):
 
         path = self.img_paths_[idx]
 
-        img = load_image(self.path + '/' + path)
+        img = load_image(self.path + '/' + path).to(torch.float32)
 
-        label = 0
+        label = [-1, -1]
 
         if MODE == "evaluate":
-            label = 1 if \
+            label = [0, 1] if \
                     DATA_CSV[
                         IMAGE_COL_FIND(DATA_CSV[IMAGE_PATH_COL], path) if IMAGE_COL_FIND else DATA_CSV[IMAGE_PATH_COL] == path
                     ][VIEW_COL] \
                     == "MLO" \
-                else 0
+                else [1, 0]
             
         return img, label
 
+# Function to predict laterality
 def laterality(imgs: torch.Tensor) -> torch.Tensor:
     """[left, right]
 
     Args:
-        imgs (torch.Tensor): _description_
+        imgs (torch.Tensor): shape(x,1,224,224)
 
     Returns:
         torch.Tensor: (x, 2) tensor where 0 is left and 1 is right
     """ 
 
-    left = imgs[:, :, :112]
-    right = imgs[:, :, 112:]
+    left = imgs[:, :, :, :112]
+    right = imgs[:, :, :, 112:]
 
-    left_sum = left.sum((1, 2))
-    right_sum = right.sum((1, 2))
+    left_sum = left.sum((1, 2, 3))
+    right_sum = right.sum((1, 2, 3))
 
-    print(left_sum.shape)
+    sides = torch.stack([left_sum, right_sum], dim=1)
+    total = imgs.sum((1,2,3)).unsqueeze(1)
 
-    return torch.stack([left_sum, right_sum], dim=1) / imgs.sum((1,2))
+    return sides / total
 
 class SAMMY(nn.Module):
     def __init__(self):
@@ -308,11 +318,15 @@ if __name__ == "__main__":
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # Load Dataset
-    #data = EagerLoader()
+    print("Loading Data...")
+
+    # Load Dataset, EagerLoader Prefered
+    data = EagerLoader()
 
     # Create Dataloader
-    #data_loader = DataLoader(data, batch_size=32)
+    data_loader = DataLoader(data, batch_size=32)
+
+    print("Loading Model...")
 
     # Load Model
     model = SAMMY()
@@ -321,6 +335,81 @@ if __name__ == "__main__":
     model.eval()
     model.to(device)
 
+    y_pred = []
+    y_true = []
+
+    print("Predicting View...")
+
+    with torch.no_grad():
+        num_batches = data_loader.__len__()
+
+        for i, batch in enumerate(data_loader):
+
+            update: str = f"{i+1}/{num_batches}\r"
+
+            print(
+                color_score((i+1)/num_batches)(update),
+                end=''
+            )
+
+            x, y = batch 
+
+            preds = model(x)
+            
+            y_pred.extend(preds.tolist()) 
+            if MODE == "evaluate":
+                y_true.extend(torch.argmax(y, dim=1).tolist())
+
+    y_pred = torch.Tensor(y_pred).reshape((data.__len__(), 2))
+
+    if MODE == "evaluate":
+
+        y_true = torch.Tensor(y_true).reshape((data.__len__(),)).to(torch.long)
+
+        metrics = [classification.Accuracy(task="multiclass", num_classes=2), classification.AUROC(task="multiclass", num_classes=2), torch.nn.CrossEntropyLoss()]
+
+        for m in metrics:
+            
+            score = m(y_pred, y_true)
+
+            print(
+                Color.MAGENTA.apply(f"{m.__class__.__name__}: "),
+                color_score(score)(f"{score:.4}")
+            )
+    
+    else: # Predict
+
+        # Save predictions
+
+        Predictions = pd.DataFrame(
+            columns={
+                "File": str,
+                "Laterality": str,
+                "View": str,
+            }
+        )
+
+        Predictions['File'] = pd.Series(data.img_paths_)
+
+        Predictions['View'] = pd.Series(['CC' if yp == 0 else 'MLO' for yp in torch.argmax(y_pred, dim=1)])
+
+        print("Predicting Laterality...")
+
+        lat_pred = []
+
+        # Get Laterallity
+        for batch in data_loader:
+            x, y = batch  # Unpack batch (if labels exist)
+
+            lat = laterality(x)
+            
+            lat_pred.extend(torch.argmax(lat, dim=1).tolist())
+
+        Predictions['Laterality'] = pd.Series(['L' if lp == 0 else 'R' for lp in lat_pred])
+
+        print("Saving...")
+
+        Predictions.to_csv('predictions.csv', index=False)
     
 
 
