@@ -59,14 +59,14 @@ def color_score(s: float):
 
 # Settings
 MODEL_PATH: str = "models/SAMMY.pt"
-IMG_FOLDER: str = "INBreast/ALL-IMGS"                                         # <--------- Replace with your Folder for images or list of image paths
-DATA_CSV: str = pd.read_excel("INBreast/INbreast.xls", dtype=str)                        # <--------- Replace with your csv for labels pd.DataFrame
-IMAGE_PATH_COL: str = "File Name"                                                # <--------- Column for associating images w entries
-IMAGE_COL_FIND: Callable = lambda image_col_path, file: image_col_path == file.split("_")[0] # <--------- If Image Column not exactly file name, None if Image Col == File Name
-VIEW_COL: str = "View"                                                           # <--------- Column to get label
-MODE: Literal["predict", "evaluate"] = "predict"
+IMG_FOLDER: str = "INBreast/ALL-IMGS"                                                           # <--------- Replace with your Folder for images or list of image paths
+DATA_CSV: str = pd.read_excel("INBreast/INbreast.xls", dtype=str)                               # <--------- Replace with your csv for labels pd.DataFrame
+IMAGE_PATH_COL: str = "File Name"                                                               # <--------- Column for associating images w entries
+IMAGE_COL_FIND: Callable = lambda image_col_path, file: image_col_path == file.split("_")[0]    # <--------- If Image Column not exactly file name, None if Image Col == File Name
+VIEW_COL: str = "View"                                                                          # <--------- Column to get label
+MODE: Literal["predict", "evaluate"] = "evaluate"                                               # <--------- Predict: Saves predictions to predictions.csv, Evaluate: prints stats
 SUPPORTED_FILE_TYPES: Set[str] = {"dcm", "jpeg", "jpg", "png", "webp"}
-# raise NotImplementedError(Color.RED.apply("Make your changes here!!!"))
+raise NotImplementedError(Color.RED.apply("Make your changes here!!!"))
 
 # Checks that Evaluate mode can find labels
 assert MODE != "evaluate" or not (DATA_CSV is None or IMAGE_PATH_COL is None or VIEW_COL is None), Color.RED.apply("Evaluate Mode cannot run labels DF not fully informed")
