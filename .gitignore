@@ -7,7 +7,9 @@ CBIS-DDSM
 *.images.*
 
 # Other
+.venv
 __pycache__
+lightning_logs
 
 # Miscellaneous
 *.ignore.*
