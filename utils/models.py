@@ -115,15 +115,6 @@ class models():
 
         model_eval = model.evaluate(self.x_test, self.y_test)
 
-        print(
-            f"""
-            ResNet stats
-
-            BinaryCrossentropy Loss: {model_eval[0]}
-            {'\n'.join([f'{metric}: {value}' for metric, value in zip(metrics, model_eval[1:])])}
-            """
-        )
-
         return model
     
     def SmallCNN(self, lr: float = 1e-2, 
@@ -171,15 +162,6 @@ class models():
         model.fit(self.x_train, self.y_train, **kwargs)
 
         model_eval = model.evaluate(self.x_test, self.y_test)
-
-        print(
-            f"""
-            SmallCNN stats
-
-            BinaryCrossentropy Loss: {model_eval[0]}
-            {'\n'.join([f'{metric}: {value}' for metric, value in zip(metrics, model_eval[1:])])}
-            """
-        )
 
         return model
     
