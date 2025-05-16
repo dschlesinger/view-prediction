@@ -446,7 +446,7 @@ class cbis_ddsm():
 
         # Only take image_path, Laterality, and PatientOrientation (View)
 
-        new_df = df[['image_path', 'Laterality', 'PatientOrientation']].copy()
+        new_df = df[['image_path', 'Laterality', 'PatientOrientation', 'PatientID']].copy()
         
         new_df.rename(columns={'PatientOrientation': 'View', 'image_path': 'ImageLink'}, inplace=True)
 
@@ -573,7 +573,7 @@ class cbis_ddsm():
         return list(map(lambda x: np.array(x), [x_train, x_test, y_train, y_test]))
     
     @staticmethod
-    def get_images(compress: bool = True, new_width: int = 224, new_height: int = 224, df = None, test_split: float = 0.2, validation_split: float = None, random_state: int = 42) -> Tuple[np.array]:
+    def get_images(compress: bool = True, new_width: int = 224, new_height: int = 224, df = None, test_split: float = 0.2, validation_split: float = None, random_state: int = 42, split_by_patient_id: bool = False) -> Tuple[np.array]:
         """
         Loads images and logits for image based analysis
 
@@ -581,6 +581,8 @@ class cbis_ddsm():
 
         Average time: 10-15 min
         """
+
+        if split_by_patient_id and validation_split: raise NotImplementedError("Validation is not implemented for patient id split")
 
         if not compress: print(f"{Colors.RED.value}Warning compress = False, this will take about {round(cbis_ddsm.disk_size / (1024 ** 3), 2)} GB of RAM!{Colors.RED.value}")
 
@@ -592,9 +594,22 @@ class cbis_ddsm():
 
             df =  cbis_ddsm.load_dataframe()
 
+        train_set, test_set = None, None
+
+        if split_by_patient_id:
+
+            # Assuming symetric distribution of counts
+            pids = df['PatientID'].unique().tolist()
+
+            train_ids, test_ids = sklearn.model_selection.train_test_split(pids, test_size=test_split, random_state=random_state)
+
+            train_set, test_set = train_ids, test_ids
+
         x = []
+        x_test = []
 
         y = []
+        y_test = []
 
         total_images: int = df.__len__()
 
@@ -604,11 +619,26 @@ class cbis_ddsm():
 
             clear_output(wait=True)
 
-            x.append(image_processing.get_cbis_ddsm_image(image['ImageLink'], compress=compress, new_height=new_height, new_width=new_width, to_rgb=True, image_scale='Normalize'))
+            if split_by_patient_id and image['PatientID'] in train_set:
 
-            y.append(1 if image['View'] == 'MLO' else 0)
+                x_test.append(image_processing.get_cbis_ddsm_image(image['ImageLink'], compress=compress, new_height=new_height, new_width=new_width, to_rgb=True, image_scale='Normalize'))
 
-        x_train, x_test, y_train, y_test = sklearn.model_selection.train_test_split(x, y, test_size=test_split, random_state=random_state)
+                y_test.append(1 if image['View'] == 'MLO' else 0)
+
+            else:
+
+                x.append(image_processing.get_cbis_ddsm_image(image['ImageLink'], compress=compress, new_height=new_height, new_width=new_width, to_rgb=True, image_scale='Normalize'))
+
+                y.append(1 if image['View'] == 'MLO' else 0)
+
+        if not split_by_patient_id:
+            #Split after
+
+            x_train, x_test, y_train, y_test = sklearn.model_selection.train_test_split(x, y, test_size=test_split, random_state=random_state)
+
+        else:
+
+            x_train, y_train = x, y
 
         # Calculate % of train split to take as validation, don't if 0 or None
         if validation_split:
